@@ -27,7 +27,8 @@ import javax.swing.KeyStroke
 import java.awt.Toolkit
 
 fun main(args: Array<String>) {
-    createWindow("First window");
+    // createWindow("First window");
+    metalLayer()
 }
 
 fun createWindow(title: String) {
@@ -76,6 +77,27 @@ fun createWindow(title: String) {
     window.setVisible(true)
     // MANDATORY: set window size after calling setVisible(true)
     window.setSize(800, 600)
+
+    val loop = Thread {
+        Thread.sleep(2000)
+        // var iterations = 1
+        // while (iterations > 0) {
+        //     println("$iterations:")
+        //     if (iterations % 2 > 0)
+        //         println("even iteration")
+        //     else
+        //         println("non even iteration")
+            
+        //     println()
+        //     window.layer.redrawLayer()
+        //     iterations--
+        //     Thread.sleep(2000)
+        // }
+        while (true) {
+            window.display()
+        }
+    }
+    loop.start()
 }
 
 class Renderer(val displayScene: (Renderer, Int, Int) -> Unit): SkiaRenderer {
@@ -111,6 +133,14 @@ class State {
 
 fun displayScene(renderer: Renderer, width: Int, height: Int, xpos: Int, ypos: Int, state: State) {
     val canvas = renderer.canvas!!
+
+    // for screen flickering testing
+    // val paint = Paint().setAntiAlias(true).setColor(0xFF000000.toInt()).setMode(PaintMode.STROKE).setStrokeWidth(1f)
+    // canvas.saveLayer(10f, 10f, 100f, 100f, paint)
+    // canvas.drawLine(10f, 10f, 100f, 100f, paint)
+    // canvas.drawLine(100f, 10f, 10f, 100f, paint)
+    // canvas.restore()
+
     val watchFill = Paint().setColor(0xFFFFFFFF.toInt())
     val watchStroke = Paint().setColor(0xFF000000.toInt()).setMode(PaintMode.STROKE).setStrokeWidth(1f)
     val watchStrokeAA = Paint().setColor(0xFF000000.toInt()).setMode(PaintMode.STROKE).setStrokeWidth(1f)

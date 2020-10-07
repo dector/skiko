@@ -313,6 +313,7 @@ tasks.withType(LinkSharedLibrary::class.java).configureEach {
                     "-framework", "CoreText",
                     "-framework", "Foundation",
                     "-framework", "OpenGL",
+                    "-framework", "Metal",
                     "-framework", "QuartzCore" // for CoreAnimation
                 )
             )

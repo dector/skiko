@@ -46,6 +46,9 @@ open class SkiaLayer : HardwareLayer() {
         renderer?.onDispose()
     }
 
+    private var timer: Long = 0
+    private var fps = 0
+
     override fun draw() {
         if (!inited) {
             if (skijaState.context == null) {
@@ -55,11 +58,20 @@ open class SkiaLayer : HardwareLayer() {
             inited = true
             renderer?.onReshape(width, height)
         }
+        if (fps == 0) {
+            timer = System.nanoTime() / 1000000
+        }
         initSkija()
         skijaState.apply {
             canvas!!.clear(-1)
             renderer?.onRender(canvas!!, width, height)
             context!!.flush()
+        }
+
+        fps++;
+        if (System.nanoTime() / 1000000 - timer >= 1000) {
+            // println(fps)
+            fps = 0
         }
     }
 
