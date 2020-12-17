@@ -17,6 +17,7 @@ JavaVM *jvm = NULL;
 @interface AWTGLLayer : CAOpenGLLayer
 
 @property jobject canvasGlobalRef;
+@property volatile bool needDraw;
 
 @end
 
@@ -33,8 +34,8 @@ JavaVM *jvm = NULL;
         [self setNeedsDisplayOnBoundsChange: YES];
 
         self.canvasGlobalRef = NULL;
+        self.needDraw = NO;
     }
-
     return self;
 }
 
@@ -43,6 +44,7 @@ JavaVM *jvm = NULL;
             forLayerTime:(CFTimeInterval)t 
             displayTime:(const CVTimeStamp *)ts
 {
+    self.needDraw = NO;
     CGLSetCurrentContext(ctx);
 
     if (jvm != NULL) {
@@ -60,8 +62,22 @@ JavaVM *jvm = NULL;
         }
         (*env)->CallVoidMethod(env, self.canvasGlobalRef, drawMethod);
     }
-
     [super drawInCGLContext:ctx pixelFormat:pf forLayerTime:t displayTime:ts];
+}
+
+-(BOOL)canDrawInCGLContext:(CGLContextObj)ctx
+            pixelFormat:(CGLPixelFormatObj)pf
+            forLayerTime:(CFTimeInterval)t
+            displayTime:(const CVTimeStamp *)ts
+{
+    if (!self.needDraw)
+    {
+        [self setAsynchronous: NO];
+        return NO;
+    }
+    else {
+        return YES;
+    }
 }
 
 @end
@@ -174,7 +190,12 @@ JavaVM *jvm = NULL;
 
 - (void) updateLayerContent
 {
-    [self.glLayer performSelectorOnMainThread:@selector(setNeedsDisplay) withObject:0 waitUntilDone:NO];
+    self.glLayer.needDraw = YES;
+    // use asynchronous mode instead of just setNeedsDisplay, so Core Animation will wait for the next frame if vsync is enabled
+    if (![self.glLayer isAsynchronous]) {
+        [self.glLayer setAsynchronous: YES];
+        [self.glLayer performSelectorOnMainThread:@selector(setNeedsDisplay) withObject:0 waitUntilDone:NO];
+    }
 }
 
 - (void) disposeLayer:(JNIEnv *) env
@@ -292,7 +313,7 @@ JNIEXPORT void JNICALL Java_org_jetbrains_skiko_HardwareLayer_updateLayer(JNIEnv
 
         layersSet.glLayer = [AWTGLLayer new];
         [layersSet.container addSublayer: layersSet.glLayer];
-        
+
         jobject canvasGlobalRef = (*env)->NewGlobalRef(env, canvas);
 
         [layersSet.glLayer setCanvasGlobalRef: canvasGlobalRef];
@@ -384,6 +405,16 @@ JNIEXPORT void JNICALL Java_org_jetbrains_skiko_PlatformOperationsKt_osxSetFulls
     {
         [layer makeFullscreen:value];
     }
+}
+
+JNIEXPORT void JNICALL Java_org_jetbrains_skiko_HardwareLayer_setSwapInterval(JNIEnv *env, jobject canvas, jint interval)
+{
+    CGLSetParameter(CGLGetCurrentContext(), kCGLCPSwapInterval, &interval);
+}
+
+JNIEXPORT jboolean JNICALL Java_org_jetbrains_skiko_HardwareLayer_isAsync(JNIEnv *env, jobject canvas)
+{
+    return true;
 }
 
 void getMetalDeviceAndQueue(void** device, void** queue)

@@ -49,7 +49,7 @@ class Renderer(val displayScene: (Renderer, Int, Int) -> Unit): SkiaRenderer {
 With the following `build.gradle`:
 ```groovy
 plugins {
-    id 'org.jetbrains.kotlin.jvm' version '1.3.72'
+    id 'org.jetbrains.kotlin.jvm' version '1.4.21'
     id 'application'
 }
 

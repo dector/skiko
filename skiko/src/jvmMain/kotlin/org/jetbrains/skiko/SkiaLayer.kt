@@ -1,17 +1,12 @@
 package org.jetbrains.skiko
 
-import java.awt.Component
-import org.jetbrains.skija.BackendRenderTarget
-import org.jetbrains.skija.Canvas
-import org.jetbrains.skija.ColorSpace
-import org.jetbrains.skija.DirectContext
-import org.jetbrains.skija.FramebufferFormat
-import org.jetbrains.skija.Rect
-import org.jetbrains.skija.Surface
-import org.jetbrains.skija.SurfaceColorFormat
-import org.jetbrains.skija.SurfaceOrigin
-import org.jetbrains.skija.ClipMode
+import org.jetbrains.skija.*
+import java.awt.Graphics
+import java.awt.event.HierarchyEvent
+import java.util.concurrent.atomic.AtomicBoolean
+import javax.swing.SwingUtilities.isEventDispatchThread
 
+// Should be accessed only from the draw thread ([SkiaLayer.draw])
 private class SkijaState {
     val bleachConstant = if (hostOs == OS.MacOS) 0 else -1
     var context: DirectContext? = null
@@ -25,33 +20,90 @@ private class SkijaState {
     }
 }
 
-interface SkiaRenderer {
-    fun onInit()
-    fun onRender(canvas: Canvas, width: Int, height: Int)
-    fun onReshape(width: Int, height: Int)
-    fun onDispose()
-}
+private class PictureHolder(val instance: Picture, val width: Int, val height: Int)
 
-open class SkiaLayer() : HardwareLayer() {
+open class SkiaLayer : HardwareLayer() {
     open val api: GraphicsApi = GraphicsApi.OPENGL
 
     var renderer: SkiaRenderer? = null
-    val clipComponets = mutableListOf<ClipRectangle>()
+    val clipComponents = mutableListOf<ClipRectangle>()
 
     private val skijaState = SkijaState()
-    protected var inited: Boolean = false
+    private var inited = AtomicBoolean(false)
+    @Volatile
+    private var isDisposed = false
+    private var redrawer: Redrawer? = null
+    @Volatile
+    private var picture: PictureHolder? = null
+    private val pictureRecorder = PictureRecorder()
 
-    fun reinit() {
-        inited = false
+    init {
+        @Suppress("LeakingThis")
+        addHierarchyListener {
+            if (it.changeFlags and HierarchyEvent.SHOWING_CHANGED.toLong() != 0L) {
+                checkVisibility()
+            }
+        }
     }
 
-    override fun disposeLayer() {
-        super.disposeLayer()
-        renderer?.onDispose()
+    private fun checkVisibility() {
+        if (redrawer == null && isShowing) {
+            redrawer = createRedrawer(this)
+            needRedraw()
+        }
+    }
+
+    fun needRedraw() {
+        check(!isDisposed)
+        check(isEventDispatchThread())
+        redrawer?.needRedraw()
+    }
+
+    open fun dispose() {
+        check(!isDisposed)
+        check(isEventDispatchThread())
+        redrawer?.dispose()
+        picture?.instance?.close()
+        pictureRecorder.close()
+        isDisposed = true
+    }
+
+    override fun setBounds(x: Int, y: Int, width: Int, height: Int) {
+        super.setBounds(x, y, width, height)
+        needRedraw()
+    }
+
+    override fun paint(g: Graphics?) {
+        needRedraw()
+    }
+
+    override suspend fun update(nanoTime: Long) {
+        check(!isDisposed)
+        check(isEventDispatchThread())
+        check(picture == null)
+
+        val pictureWidth = (width * contentScale).toInt()
+        val pictureHeight = (height * contentScale).toInt()
+
+        val bounds = Rect.makeWH(pictureWidth.toFloat(), pictureHeight.toFloat())!!
+        val canvas = pictureRecorder.beginRecording(bounds)!!
+
+        // clipping
+        for (component in clipComponents) {
+            canvas.clipRectBy(component)
+        }
+
+        renderer?.onRender(canvas, pictureWidth, pictureHeight, nanoTime)
+
+        val picture = pictureRecorder.finishRecordingAsPicture()
+        this.picture = PictureHolder(picture, pictureWidth, pictureHeight)
     }
 
     override fun draw() {
-        if (!inited) {
+        check(!isDisposed)
+        val picture = checkNotNull(picture)
+
+        if (!inited.getAndSet(true)) {
             if (skijaState.context == null) {
                 skijaState.context = when (api) {
                     GraphicsApi.OPENGL -> makeGLContext()
@@ -59,47 +111,36 @@ open class SkiaLayer() : HardwareLayer() {
                     else -> TODO("Unsupported yet")
                 }
             }
-            renderer?.onInit()
-            inited = true
-            renderer?.onReshape(width, height)
         }
-        initSkija()
+        initSkija(picture.width, picture.height)
         skijaState.apply {
             canvas!!.clear(bleachConstant)
-            
-            // cliping
-            for (component in clipComponets) {
-                clipRectBy(component)
-            }
-
-            renderer?.onRender(canvas!!, width, height)
+            canvas!!.drawPicture(picture.instance)
             context!!.flush()
         }
+        picture.instance.close()
+        this.picture = null
     }
 
-    private fun clipRectBy(rectangle: ClipRectangle) {
-        skijaState.apply {
-            canvas!!.clipRect(
-                Rect.makeLTRB(
-                    rectangle.x,
-                    rectangle.y,
-                    rectangle.x + rectangle.width,
-                    rectangle.y + rectangle.height
-                ),
-                ClipMode.DIFFERENCE,
-                true
-            )
-        }
+    private fun Canvas.clipRectBy(rectangle: ClipRectangle) {
+        clipRect(
+            Rect.makeLTRB(
+                rectangle.x,
+                rectangle.y,
+                rectangle.x + rectangle.width,
+                rectangle.y + rectangle.height
+            ),
+            ClipMode.DIFFERENCE,
+            true
+        )
     }
 
-    private fun initSkija() {
-        val dpi = contentScale
-        initRenderTarget(dpi)
+    private fun initSkija(width: Int, height: Int) {
+        initRenderTarget(width, height)
         initSurface()
-        scaleCanvas(dpi)
     }
 
-    private fun initRenderTarget(dpi: Float) {
+    private fun initRenderTarget(width: Int, height: Int) {
         skijaState.apply {
             clear()
             renderTarget = when (api) {
@@ -107,8 +148,8 @@ open class SkiaLayer() : HardwareLayer() {
                     val gl = OpenGLApi.instance
                     val fbId = gl.glGetIntegerv(gl.GL_DRAW_FRAMEBUFFER_BINDING)
                     makeGLRenderTarget(
-                        (width * dpi).toInt(),
-                        (height * dpi).toInt(),
+                        width,
+                        height,
                         0,
                         8,
                         fbId,
@@ -116,8 +157,8 @@ open class SkiaLayer() : HardwareLayer() {
                     )
                 }
                 GraphicsApi.METAL -> makeMetalRenderTarget(
-                    (width * dpi).toInt(),
-                    (height * dpi).toInt(),
+                    width,
+                    height,
                     0
                 )
                 else -> TODO("Unsupported yet")
@@ -135,12 +176,6 @@ open class SkiaLayer() : HardwareLayer() {
                 ColorSpace.getSRGB()
             )
             canvas = surface!!.canvas
-        }
-    }
-
-    protected open fun scaleCanvas(dpi: Float) {
-        skijaState.apply {
-            canvas!!.scale(dpi, dpi)
         }
     }
 }

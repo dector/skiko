@@ -1,35 +1,24 @@
 package SkijaInjectSample
 
-import org.jetbrains.skiko.SkiaWindow
-
-import java.awt.event.MouseEvent
-import javax.swing.WindowConstants
-import javax.swing.event.MouseInputAdapter
 import org.jetbrains.skija.*
-import org.jetbrains.skiko.SkiaRenderer
-import java.awt.event.MouseMotionAdapter
-import kotlin.math.cos
-import kotlin.math.sin
 import org.jetbrains.skija.paragraph.FontCollection
 import org.jetbrains.skija.paragraph.ParagraphBuilder
 import org.jetbrains.skija.paragraph.ParagraphStyle
 import org.jetbrains.skija.paragraph.TextStyle
-import java.awt.event.ActionEvent
-import java.awt.event.ActionListener
-import java.awt.event.KeyEvent
+import org.jetbrains.skiko.SkiaLayer
+import org.jetbrains.skiko.SkiaRenderer
 import java.awt.Toolkit
-import javax.swing.JFrame
-import javax.swing.JMenu
-import javax.swing.JMenuBar
-import javax.swing.JMenuItem
-import javax.swing.JOptionPane
-import javax.swing.KeyStroke
+import java.awt.event.*
+import javax.swing.*
+import kotlin.math.cos
+import kotlin.math.sin
 
 fun main(args: Array<String>) {
     createWindow("First window")
+    createWindow("Second window")
 }
 
-fun createWindow(title: String) {
+fun createWindow(title: String) = SwingUtilities.invokeLater {
     var mouseX = 0
     var mouseY = 0
 
@@ -68,15 +57,14 @@ fun createWindow(title: String) {
     val state = State()
     state.text = title
 
-    window.layer.renderer = Renderer {
-        renderer, w, h -> displayScene(renderer, w, h, mouseX, mouseY, state)
+    window.layer.renderer = Renderer(window.layer) {
+        renderer, w, h, nanoTime -> displayScene(renderer, w, h, nanoTime, mouseX, mouseY, state)
     }
 
     window.layer.addMouseMotionListener(object : MouseMotionAdapter() {
         override fun mouseMoved(event: MouseEvent) {
             mouseX = event.x
             mouseY = event.y
-            window.display()
         }
     })
 
@@ -85,7 +73,10 @@ fun createWindow(title: String) {
     window.setVisible(true)
 }
 
-class Renderer(val displayScene: (Renderer, Int, Int) -> Unit): SkiaRenderer {
+class Renderer(
+    val layer: SkiaLayer,
+    val displayScene: (Renderer, Int, Int, Long) -> Unit
+): SkiaRenderer {
     val typeface = Typeface.makeFromFile("fonts/JetBrainsMono-Regular.ttf")
     val font = Font(typeface, 40f)
     val paint = Paint().apply {
@@ -96,18 +87,16 @@ class Renderer(val displayScene: (Renderer, Int, Int) -> Unit): SkiaRenderer {
 
     var canvas: Canvas? = null
 
-    override fun onInit() {
-    }
-
-    override fun onDispose() {
-    }
-
-    override fun onReshape(width: Int, height: Int) {
-    }
-
-    override fun onRender(canvas: Canvas, width: Int, height: Int) {
+    var t1 = System.nanoTime()
+    override suspend fun onRender(canvas: Canvas, width: Int, height: Int, nanoTime: Long) {
+        val t2 = System.nanoTime()
+        println("${Thread.currentThread()}" + (t2-t1) / 1E6)
+        t1 = t2
         this.canvas = canvas
-        displayScene(this, width, height)
+        val contentScale = layer.contentScale
+        canvas.scale(contentScale, contentScale)
+        displayScene(this, (width / contentScale).toInt(), (height / contentScale).toInt(), nanoTime)
+        layer.needRedraw()
     }
 }
 
@@ -116,7 +105,7 @@ class State {
     var text: String = "Hello Skija"
 }
 
-fun displayScene(renderer: Renderer, width: Int, height: Int, xpos: Int, ypos: Int, state: State) {
+fun displayScene(renderer: Renderer, width: Int, height: Int, nanoTime: Long, xpos: Int, ypos: Int, state: State) {
     val canvas = renderer.canvas!!
     val watchFill = Paint().setColor(0xFFFFFFFF.toInt())
     val watchStroke = Paint().setColor(0xFF000000.toInt()).setMode(PaintMode.STROKE).setStrokeWidth(1f)
@@ -140,7 +129,7 @@ fun displayScene(renderer: Renderer, width: Int, height: Int, xpos: Int, ypos: I
                 )
                 angle += (2.0 * Math.PI / 12.0).toFloat()
             }
-            val time = System.currentTimeMillis() % 60000 +
+            val time = (nanoTime / 1E6) % 60000 +
                     (x.toFloat() / width * 5000).toLong() +
                     (y.toFloat() / width * 5000).toLong()
 

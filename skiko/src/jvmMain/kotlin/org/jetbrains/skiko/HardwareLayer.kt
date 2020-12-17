@@ -1,11 +1,10 @@
 package org.jetbrains.skiko
 
-import java.awt.Graphics
 import java.awt.Canvas
-import javax.swing.SwingUtilities.convertPoint
-import javax.swing.SwingUtilities.getRootPane
 
-abstract class HardwareLayer : Canvas(), Drawable {
+abstract class HardwareLayer : Canvas() {
+
+    private val _contentScale = CachedValue { platformOperations.getDpiScale(this) }
 
     companion object {
         init {
@@ -13,36 +12,38 @@ abstract class HardwareLayer : Canvas(), Drawable {
         }
     }
 
-    override fun paint(g: Graphics) {
-        display()
+    override fun setBounds(x: Int, y: Int, width: Int, height: Int) {
+        super.setBounds(x, y, width, height)
+        _contentScale.reset()
+        contentScaleChanged()
     }
 
-    open fun display() {
-        this.updateLayer()
-        this.redrawLayer()
-    }
+    protected open fun contentScaleChanged() = Unit
 
-    open fun draw() {}
+    // Can be create only after component will be shown to user (isShowing == true)
+    protected open external fun createRedrawer(layer: HardwareLayer): Redrawer
 
-    external override fun redrawLayer()
+    // Should be called in Swing thread
+    internal abstract suspend fun update(nanoTime: Long)
 
-    external override fun updateLayer()
+    // Should be called in the OpenGL thread, and only once after update
+    internal abstract fun draw()
 
-    external override fun disposeLayer()
-
-    override val windowHandle: Long
+    val windowHandle: Long
         external get
 
-    override val contentScale: Float
-        get() = platformOperations.getDpiScale(this)
-
-    val absoluteX: Int
-        get() = convertPoint(this, x, y, getRootPane(this)).x
-
-    val absoluteY: Int
-        get() = convertPoint(this, x, y, getRootPane(this)).y
+    val contentScale: Float
+        get() = _contentScale.value
 
     var fullscreen: Boolean
         get() = platformOperations.isFullscreen(this)
         set(value) = platformOperations.setFullscreen(this, value)
+
+    // TODO add ability to redraw immediately (after resize or window start)
+    //  To do so maybe we need to make update synchronous (without suspend).
+    //  or just call draw without update
+    interface Redrawer {
+        fun dispose()
+        fun needRedraw()
+    }
 }

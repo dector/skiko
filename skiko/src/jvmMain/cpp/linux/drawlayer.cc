@@ -82,8 +82,9 @@ private:
                     return;
                 }
                 env->CallVoidMethod(canvasGlobalRef, drawMethod);
-                glFinish();
+
                 glXSwapBuffers(display, window);
+                glFinish();
             }
             ds->FreeDrawingSurfaceInfo(dsi);
             ds->Unlock(ds);
@@ -293,5 +294,41 @@ extern "C"
         awt.FreeDrawingSurface(ds);
 
         return dpi;
+    }
+
+    JNIEXPORT void JNICALL Java_org_jetbrains_skiko_HardwareLayer_setSwapInterval(JNIEnv *env, jobject canvas, jint interval)
+    {
+        // according to:
+        // https://opengl.gpuinfo.org/listreports.php?extension=GLX_EXT_swap_control
+        // https://opengl.gpuinfo.org/listreports.php?extension=GLX_MESA_swap_control
+        // https://opengl.gpuinfo.org/listreports.php?extension=GLX_SGI_swap_control
+        // there is no Linux that doesn't support at least one of these extensions
+        static PFNGLXSWAPINTERVALEXTPROC glXSwapIntervalEXT = (PFNGLXSWAPINTERVALEXTPROC) glXGetProcAddress((const GLubyte*)"glXSwapIntervalEXT");
+
+        if (glXSwapIntervalEXT != NULL)
+        {
+            glXSwapIntervalEXT(display, window, interval;
+        }
+        else
+        {
+            static PFNGLXSWAPINTERVALMESAPROC glXSwapIntervalMESA = (PFNGLXSWAPINTERVALMESAPROC) glXGetProcAddress((const GLubyte*)"glXSwapIntervalMESA");
+            if (glXSwapIntervalMESA != NULL)
+            {
+                glXSwapIntervalMESA(interval);
+            }
+            else
+            {
+                static PFNGLXSWAPINTERVALSGIPROC glXSwapIntervalSGI = (PFNGLXSWAPINTERVALSGIPROC) glXGetProcAddress((const GLubyte*)"glXSwapIntervalSGI");
+                if (glXSwapIntervalSGI != NULL)
+                {
+                    glXSwapIntervalSGI(interval);
+                }
+            }
+        }
+    }
+
+    JNIEXPORT jboolean JNICALL Java_org_jetbrains_skiko_HardwareLayer_isAsync(JNIEnv *env, jobject window)
+    {
+        return false;
     }
 } // extern "C"
